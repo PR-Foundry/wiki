@@ -1,4 +1,11 @@
-import { expect, test } from '../fixtures';
+import { expect, test } from '@playwright/test';
+import { createDoc } from '../helpers/frappe';
+import { appUrl } from '../helpers/routes';
+import {
+	type WikiSpace,
+	cleanupWikiSpacesByRoute,
+	createTestWikiDocument,
+} from '../helpers/wiki';
 
 /**
  * TB1b-ii — a git-synced Wiki Space renders read-only in the authoring SPA.
@@ -13,28 +20,45 @@ test.describe('Git-synced space (read-only)', () => {
 	const REPO = 'frappe/wiki';
 	const BRANCH = 'main';
 
+	let route: string;
+
+	test.afterEach(async ({ request }) => {
+		if (route) await cleanupWikiSpacesByRoute(request, route);
+		route = '';
+	});
+
 	test('renders read-only with no editing affordances', async ({
 		page,
-		wiki,
+		request,
 	}) => {
+		route = `git-sync-ro-${Date.now()}`;
 		// last_sync_time is set so SpaceDetails treats the space as already
 		// synced and skips the auto initial-sync (which would hit GitHub).
+		const space = await createDoc<WikiSpace & { root_group: string }>(
+			request,
+			'Wiki Space',
+			{
+				route,
+				space_name: route,
+				is_published: true,
+				git_synced: 1,
+				repo_full_name: REPO,
+				branch: BRANCH,
+				last_sync_status: 'Success',
+				last_sync_time: '2026-01-01 00:00:00',
+			},
+		);
+
 		const pageTitle = `Synced Page ${Date.now()}`;
-		const space = await wiki.space({
-			git_synced: 1,
-			repo_full_name: REPO,
-			branch: BRANCH,
-			last_sync_status: 'Success',
-			last_sync_time: '2026-01-01 00:00:00',
-			pages: [
-				{
-					title: pageTitle,
-					content: '# Synced Heading\n\nThis content comes from the repo.',
-				},
-			],
+		await createTestWikiDocument(request, {
+			title: pageTitle,
+			content: '# Synced Heading\n\nThis content comes from the repo.',
+			wiki_space: space.name,
+			parent_wiki_document: space.root_group,
+			is_published: true,
 		});
 
-		await page.goto(space.url());
+		await page.goto(appUrl('spaces', space.name));
 		await page.waitForLoadState('networkidle');
 
 		// Synced banner (shared SpaceChromeBar): the repo link marks it as synced
@@ -45,9 +69,7 @@ test.describe('Git-synced space (read-only)', () => {
 		await expect(page.getByRole('button', { name: 'Sync now' })).toBeVisible();
 
 		// No create / mutation affordances in the sidebar.
-		await expect(
-			page.getByRole('button', { name: 'New page', exact: true }),
-		).toHaveCount(0);
+		await expect(page.locator('button[title="Add"]')).toHaveCount(0);
 
 		// Open the synced page and confirm the viewer is non-editable.
 		await page.locator('aside').getByText(pageTitle, { exact: true }).click();

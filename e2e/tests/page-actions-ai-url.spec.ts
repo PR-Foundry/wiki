@@ -1,12 +1,13 @@
-import { expect, test } from '../fixtures';
+import { expect, test } from '@playwright/test';
 import { getList } from '../helpers/frappe';
-import { CHANGE_REQUEST_URL_RE } from '../helpers/routes';
+import {
+	APP_BASE,
+	CHANGE_REQUEST_URL_RE,
+	spaceLinkSelector,
+} from '../helpers/routes';
 import {
 	clickSidebarAddOption,
-	currentDraftDocKey,
-	openNewPageDialog,
 	publishChangeRequestFromReview,
-	saveEditor,
 } from '../helpers/wiki';
 
 interface WikiDocumentRoute {
@@ -42,19 +43,29 @@ test.describe('Page actions – AI link URL', () => {
 	test('Open in ChatGPT uses the current page URL after sidebar navigation', async ({
 		page,
 		request,
-		wiki,
 	}) => {
 		await page.setViewportSize({ width: 1100, height: 900 });
 
-		const space = await wiki.space();
-		await page.goto(space.url());
+		await page.goto(APP_BASE);
+		await page.waitForLoadState('networkidle');
+
+		const spaceLink = page.locator(spaceLinkSelector()).first();
+		await expect(spaceLink).toBeVisible({ timeout: 5000 });
+		await spaceLink.click();
 		await page.waitForLoadState('networkidle');
 
 		const editor = page.locator('.ProseMirror, [contenteditable="true"]');
 
 		// --- Create and fill the first page ---
 		const firstPageTitle = `ai-url-first-${Date.now()}`;
-		await openNewPageDialog(page);
+		const createFirstPage = page.locator(
+			'button:has-text("Create First Page")',
+		);
+		if (await createFirstPage.isVisible({ timeout: 2000 }).catch(() => false)) {
+			await createFirstPage.click();
+		} else {
+			await clickSidebarAddOption(page, 'New Page');
+		}
 		await page.getByLabel('Title').fill(firstPageTitle);
 		await page
 			.getByRole('dialog')
@@ -66,7 +77,10 @@ test.describe('Page actions – AI link URL', () => {
 			.locator('aside')
 			.getByText(firstPageTitle, { exact: true })
 			.click();
-		const firstDocKey = await currentDraftDocKey(page);
+		await page.waitForURL(/\/draft\/[^/?#]+/);
+		const firstDocKey = decodeURIComponent(
+			page.url().match(/\/draft\/([^/?#]+)/)?.[1] ?? '',
+		);
 		expect(firstDocKey).not.toBe('');
 
 		await expect(editor).toBeVisible({ timeout: 10000 });
@@ -80,7 +94,7 @@ test.describe('Page actions – AI link URL', () => {
 		});
 		await editor.click();
 		await page.waitForTimeout(500);
-		await saveEditor(page);
+		await page.click('button:has-text("Save")');
 		await page.waitForLoadState('networkidle');
 		await page.waitForTimeout(2000);
 
@@ -98,7 +112,10 @@ test.describe('Page actions – AI link URL', () => {
 			.locator('aside')
 			.getByText(secondPageTitle, { exact: true })
 			.click();
-		const secondDocKey = await currentDraftDocKey(page);
+		await page.waitForURL(/\/draft\/[^/?#]+/);
+		const secondDocKey = decodeURIComponent(
+			page.url().match(/\/draft\/([^/?#]+)/)?.[1] ?? '',
+		);
 		expect(secondDocKey).not.toBe('');
 
 		await expect(editor).toBeVisible({ timeout: 10000 });
@@ -114,7 +131,7 @@ test.describe('Page actions – AI link URL', () => {
 		});
 		await editor.click();
 		await page.waitForTimeout(500);
-		await saveEditor(page);
+		await page.click('button:has-text("Save")');
 		await page.waitForLoadState('networkidle');
 		await page.waitForTimeout(2000);
 

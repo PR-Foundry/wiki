@@ -157,7 +157,10 @@ export const SLASH_COMMANDS = [
 				.chain()
 				.focus()
 				.deleteRange(range)
-				.setCallout({ type: 'note' })
+				.insertContent({
+					type: 'calloutBlock',
+					attrs: { type: 'note', title: '', content: '' },
+				})
 				.run();
 		},
 	},
@@ -170,7 +173,10 @@ export const SLASH_COMMANDS = [
 				.chain()
 				.focus()
 				.deleteRange(range)
-				.setCallout({ type: 'tip' })
+				.insertContent({
+					type: 'calloutBlock',
+					attrs: { type: 'tip', title: '', content: '' },
+				})
 				.run();
 		},
 	},
@@ -183,7 +189,14 @@ export const SLASH_COMMANDS = [
 				.chain()
 				.focus()
 				.deleteRange(range)
-				.setCallout({ type: 'caution' })
+				.insertContent({
+					type: 'calloutBlock',
+					attrs: {
+						type: 'caution',
+						title: '',
+						content: '',
+					},
+				})
 				.run();
 		},
 	},
@@ -196,7 +209,14 @@ export const SLASH_COMMANDS = [
 				.chain()
 				.focus()
 				.deleteRange(range)
-				.setCallout({ type: 'danger' })
+				.insertContent({
+					type: 'calloutBlock',
+					attrs: {
+						type: 'danger',
+						title: '',
+						content: '',
+					},
+				})
 				.run();
 		},
 	},

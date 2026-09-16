@@ -1,19 +1,8 @@
-import type { Page } from '@playwright/test';
-import { expect, test } from '../fixtures';
-import { type WikiFactory, uniqueRoute } from '../helpers/factory';
+import { expect, test } from '@playwright/test';
 import { callMethod } from '../helpers/frappe';
 import { delayMethod, failMethod } from '../helpers/mock';
 import { SPACE_URL_RE, appUrl } from '../helpers/routes';
-import { openNewPageDialog, saveEditor } from '../helpers/wiki';
-
-/**
- * The sidebar's sync alert only speaks when something is in flight or wrong;
- * a settled draft shows nothing at all. "Saved" is therefore the absence of
- * the alert, not a label to wait for.
- */
-async function expectSyncSettled(page: Page, timeout = 5000) {
-	await expect(page.getByTestId('sync-state-alert')).toBeHidden({ timeout });
-}
+import { openNewPageDialog } from '../helpers/wiki';
 
 interface DraftNode {
 	docKey: string;
@@ -54,16 +43,10 @@ declare global {
 const CR_METHOD_PREFIX =
 	'wiki.frappe_wiki.doctype.wiki_change_request.wiki_change_request';
 
-/**
- * Build a space through the New Space dialog.
- *
- * These specs need the store hydrated exactly the way the app hydrates it, so
- * the dialog is load-bearing here and the API factory cannot stand in. The
- * factory still adopts the result, so the space is torn down with the test.
- */
-async function createSpaceViaUI(page: Page, wiki: WikiFactory) {
-	const route = uniqueRoute('local-first');
-	const name = route;
+async function createSpaceViaUI(
+	page: import('@playwright/test').Page,
+	{ name, route }: { name: string; route: string },
+) {
 	await page.goto(appUrl('spaces'));
 	await page.waitForLoadState('networkidle');
 	await page.getByRole('button', { name: 'New Space' }).click();
@@ -84,11 +67,13 @@ async function createSpaceViaUI(page: Page, wiki: WikiFactory) {
 		timeout: 10000,
 	});
 	const spaceId = page.url().split(`${appUrl('spaces')}/`)[1];
-	wiki.adopt(spaceId);
 	return { spaceId };
 }
 
-async function createPageViaUI(page: Page, title: string) {
+async function createPageViaUI(
+	page: import('@playwright/test').Page,
+	title: string,
+) {
 	await openNewPageDialog(page);
 	await page.getByLabel('Title').fill(title);
 	await page.getByRole('dialog').getByRole('button', { name: 'Save' }).click();
@@ -97,13 +82,14 @@ async function createPageViaUI(page: Page, title: string) {
 test.describe('Local-first draft workspace', () => {
 	test('delayed apply_cr_operations create: page appears immediately and content survives promotion', async ({
 		page,
-		wiki,
 	}) => {
 		const timestamp = Date.now();
+		const spaceName = `Delay Create Space ${timestamp}`;
+		const spaceRoute = `delay-create-space-${timestamp}`;
 		const pageTitle = `delay-create-page-${timestamp}`;
 		const typedContent = `Typed before backend confirmed ${timestamp}`;
 
-		await createSpaceViaUI(page, wiki);
+		await createSpaceViaUI(page, { name: spaceName, route: spaceRoute });
 
 		// Inject 2.5s of latency on apply_cr_operations so the optimistic UI
 		// is observable for the full duration before the temp key is promoted.
@@ -154,19 +140,22 @@ test.describe('Local-first draft workspace', () => {
 
 		// Promotion triggers a save against the real key. Let that intercepted
 		// request finish before unregistering its delayed route handler.
-		await expectSyncSettled(page, 6000);
+		await expect(page.getByText('All changes saved')).toBeVisible({
+			timeout: 6000,
+		});
 		await unroute();
 	});
 
 	test('failed apply_cr_operations save: content stays visible and submit is blocked', async ({
 		page,
-		wiki,
 	}) => {
 		const timestamp = Date.now();
+		const spaceName = `Fail Update Space ${timestamp}`;
+		const spaceRoute = `fail-update-space-${timestamp}`;
 		const pageTitle = `fail-update-page-${timestamp}`;
 		const typedContent = `Should survive failed save ${timestamp}`;
 
-		await createSpaceViaUI(page, wiki);
+		await createSpaceViaUI(page, { name: spaceName, route: spaceRoute });
 		await createPageViaUI(page, pageTitle);
 
 		await page.locator('aside').getByText(pageTitle, { exact: true }).click();
@@ -204,7 +193,8 @@ test.describe('Local-first draft workspace', () => {
 				contentType: 'markdown',
 			});
 		}, typedContent);
-		await saveEditor(page);
+		await editor.click();
+		await page.getByRole('button', { name: 'Save' }).click();
 
 		// Sync-state badge should report failure.
 		await expect(page.getByText('Sync failed')).toBeVisible({
@@ -224,13 +214,14 @@ test.describe('Local-first draft workspace', () => {
 
 	test('Reload latest after a failed save clears the conflict and re-enables Submit', async ({
 		page,
-		wiki,
 	}) => {
 		const timestamp = Date.now();
+		const spaceName = `Reload Latest Space ${timestamp}`;
+		const spaceRoute = `reload-latest-space-${timestamp}`;
 		const pageTitle = `reload-latest-page-${timestamp}`;
 		const typedContent = `Will fail to save ${timestamp}`;
 
-		await createSpaceViaUI(page, wiki);
+		await createSpaceViaUI(page, { name: spaceName, route: spaceRoute });
 		await createPageViaUI(page, pageTitle);
 
 		await page.locator('aside').getByText(pageTitle, { exact: true }).click();
@@ -261,7 +252,8 @@ test.describe('Local-first draft workspace', () => {
 				contentType: 'markdown',
 			});
 		}, typedContent);
-		await saveEditor(page);
+		await editor.click();
+		await page.getByRole('button', { name: 'Save' }).click();
 
 		// The save fails; banner surfaces it and Reload latest appears.
 		await expect(page.getByText('Sync failed')).toBeVisible({ timeout: 5000 });
@@ -279,33 +271,34 @@ test.describe('Local-first draft workspace', () => {
 		await unroute();
 		await reloadButton.click();
 
-		// Sync-failed banner clears and the recovery button hides — but the
-		// editor's DOM still holds the user's unsaved typed content, so the
-		// workspace must keep reporting it. Submitting from here flushes it
-		// first; what must never happen is the state going quiet while the
-		// screen holds text the CR does not.
+		// Sync-failed banner clears and the recovery button hides — but
+		// Submit MUST stay disabled because the editor's DOM still holds
+		// the user's unsaved typed content. Unblocking here would let the
+		// user submit a CR that doesn't contain what they see on screen.
 		await expect(page.getByText('Sync failed')).toBeHidden({ timeout: 5000 });
 		await expect(reloadButton).toBeHidden();
-		await expect(page.getByText('Unsaved changes')).toBeVisible({
-			timeout: 5000,
-		});
+		await expect(submitButton).toBeDisabled();
 
 		// Resolving the typed content (Save now succeeds because the
-		// mock is gone and operation_version is fresh) settles the state.
-		await saveEditor(page);
-		await expectSyncSettled(page, 5000);
+		// mock is gone and operation_version is fresh) is what finally
+		// re-enables Submit.
+		await page.getByRole('button', { name: 'Save' }).click();
+		await expect(page.getByText('All changes saved')).toBeVisible({
+			timeout: 5000,
+		});
 		await expect(submitButton).toBeEnabled();
 	});
 
-	test('typing in editor reports unsaved content until the change is flushed to the CR', async ({
+	test('typing in editor disables Submit until the change is flushed to the CR', async ({
 		page,
-		wiki,
 	}) => {
 		const timestamp = Date.now();
+		const spaceName = `Dirty Editor Space ${timestamp}`;
+		const spaceRoute = `dirty-editor-space-${timestamp}`;
 		const pageTitle = `dirty-editor-page-${timestamp}`;
 		const typedContent = `Must not be dropped by submit ${timestamp}`;
 
-		await createSpaceViaUI(page, wiki);
+		await createSpaceViaUI(page, { name: spaceName, route: spaceRoute });
 		await createPageViaUI(page, pageTitle);
 
 		await page.locator('aside').getByText(pageTitle, { exact: true }).click();
@@ -342,30 +335,34 @@ test.describe('Local-first draft workspace', () => {
 		}, typedContent);
 		await editor.click();
 
-		// The fix: the workspace must report unsaved editor content the store
-		// hasn't received yet. Submitting flushes it first — what must never
-		// happen is a submit that silently loses the latest text.
-		await expect(page.getByText('Unsaved changes')).toBeVisible({
+		// The fix: Submit must be disabled while the editor has unsaved
+		// typed content the store hasn't received yet. Without it, the user
+		// can submit a stale backend CR and silently lose the latest text.
+		await expect(submitButton).toBeDisabled();
+
+		// Flushing via manual Save lands the content and re-enables Submit.
+		await page.getByRole('button', { name: 'Save' }).click();
+		await expect(page.getByText('All changes saved')).toBeVisible({
 			timeout: 5000,
 		});
-
-		// Flushing by hand lands the content and settles the sync state.
-		await saveEditor(page);
-		await expectSyncSettled(page, 5000);
 		await expect(submitButton).toBeEnabled();
 	});
 
-	test('navigating away from dirty content auto-saves it', async ({
+	test('navigating away from dirty content auto-saves it and re-enables Submit', async ({
 		page,
 		request,
-		wiki,
 	}) => {
 		const timestamp = Date.now();
+		const spaceName = `Navigate Dirty Space ${timestamp}`;
+		const spaceRoute = `navigate-dirty-space-${timestamp}`;
 		const firstTitle = `navigate-first-page-${timestamp}`;
 		const secondTitle = `navigate-second-page-${timestamp}`;
 		const typedContent = `Must survive document navigation ${timestamp}`;
 
-		const { spaceId } = await createSpaceViaUI(page, wiki);
+		const { spaceId } = await createSpaceViaUI(page, {
+			name: spaceName,
+			route: spaceRoute,
+		});
 		const draft = await callMethod<{ name: string }>(
 			request,
 			`${CR_METHOD_PREFIX}.get_or_create_draft_change_request`,
@@ -418,13 +415,13 @@ test.describe('Local-first draft workspace', () => {
 			});
 		}, typedContent);
 		await editor.click();
-		await expect(page.getByText('Unsaved changes')).toBeVisible({
-			timeout: 5000,
-		});
+		await expect(submitButton).toBeDisabled();
 
 		// Navigating away flushes the dirty buffer to the server.
 		await page.locator('aside').getByText(secondTitle, { exact: true }).click();
-		await expectSyncSettled(page, 5000);
+		await expect(page.getByText('All changes saved')).toBeVisible({
+			timeout: 5000,
+		});
 		await expect(submitButton).toBeEnabled();
 
 		await page.locator('aside').getByText(firstTitle, { exact: true }).click();
@@ -432,16 +429,17 @@ test.describe('Local-first draft workspace', () => {
 		await expect(submitButton).toBeEnabled();
 	});
 
-	test('typing then undoing back to saved content clears the unsaved state without a redundant save', async ({
+	test('typing then undoing back to saved content re-enables Submit without a redundant save', async ({
 		page,
-		wiki,
 	}) => {
 		const timestamp = Date.now();
+		const spaceName = `Undo Editor Space ${timestamp}`;
+		const spaceRoute = `undo-editor-space-${timestamp}`;
 		const pageTitle = `undo-editor-page-${timestamp}`;
 		const baselineContent = `Baseline ${timestamp}`;
 		const transientContent = `Transient typing ${timestamp}`;
 
-		await createSpaceViaUI(page, wiki);
+		await createSpaceViaUI(page, { name: spaceName, route: spaceRoute });
 		await createPageViaUI(page, pageTitle);
 
 		await page.locator('aside').getByText(pageTitle, { exact: true }).click();
@@ -468,42 +466,52 @@ test.describe('Local-first draft workspace', () => {
 				contentType: 'markdown',
 			});
 		}, baselineContent);
-		await saveEditor(page);
-		await expectSyncSettled(page, 5000);
+		await editor.click();
+		await page.getByRole('button', { name: 'Save' }).click();
+		await expect(page.getByText('All changes saved')).toBeVisible({
+			timeout: 5000,
+		});
 
-		// Type something new — the buffer diverges from the last saved snapshot.
+		const submitButton = page.getByRole('button', {
+			name: 'Submit for Review',
+		});
+		await expect(submitButton).toBeEnabled();
+
+		// Type something new — Submit should go disabled.
 		await page.evaluate((content) => {
 			window.wikiEditor.commands.setContent(content, {
 				contentType: 'markdown',
 			});
 		}, transientContent);
 		await editor.click();
-		await expect(page.getByText('Unsaved changes')).toBeVisible({
-			timeout: 5000,
-		});
+		await expect(submitButton).toBeDisabled();
 
 		// Revert back to the saved content. No save is issued; the derived
-		// local snapshot converges with the baseline and the unsaved state
-		// clears on its own.
+		// local snapshot converges with the baseline and the banner gate
+		// releases on its own.
 		await page.evaluate((content) => {
 			window.wikiEditor.commands.setContent(content, {
 				contentType: 'markdown',
 			});
 		}, baselineContent);
 		await editor.click();
-		await expectSyncSettled(page, 5000);
+		await expect(submitButton).toBeEnabled();
 	});
 
 	test('dirty content on an existing published page survives browser refresh', async ({
 		page,
 		request,
-		wiki,
 	}) => {
 		const timestamp = Date.now();
+		const spaceName = `Published Persist Space ${timestamp}`;
+		const spaceRoute = `published-persist-space-${timestamp}`;
 		const pageTitle = `published-persist-page-${timestamp}`;
 		const typedContent = `Existing page survives refresh ${timestamp}`;
 
-		const { spaceId } = await createSpaceViaUI(page, wiki);
+		const { spaceId } = await createSpaceViaUI(page, {
+			name: spaceName,
+			route: spaceRoute,
+		});
 		const initialDraft = await callMethod<{ name: string }>(
 			request,
 			`${CR_METHOD_PREFIX}.get_or_create_draft_change_request`,
@@ -561,8 +569,10 @@ test.describe('Local-first draft workspace', () => {
 			timeout: 5000,
 		});
 
-		await saveEditor(page);
-		await expectSyncSettled(page, 5000);
+		await page.getByRole('button', { name: 'Save' }).click();
+		await expect(page.getByText('All changes saved')).toBeVisible({
+			timeout: 5000,
+		});
 		const submitButton = page.getByRole('button', {
 			name: 'Submit for Review',
 		});
@@ -571,13 +581,14 @@ test.describe('Local-first draft workspace', () => {
 
 	test('dirty editor content survives a browser refresh via IndexedDB', async ({
 		page,
-		wiki,
 	}) => {
 		const timestamp = Date.now();
+		const spaceName = `Persist Space ${timestamp}`;
+		const spaceRoute = `persist-space-${timestamp}`;
 		const pageTitle = `persist-page-${timestamp}`;
 		const typedContent = `Survives a refresh ${timestamp}`;
 
-		await createSpaceViaUI(page, wiki);
+		await createSpaceViaUI(page, { name: spaceName, route: spaceRoute });
 		await createPageViaUI(page, pageTitle);
 
 		await page.locator('aside').getByText(pageTitle, { exact: true }).click();
@@ -616,7 +627,7 @@ test.describe('Local-first draft workspace', () => {
 
 		// Navigate back to the draft page. The editor should reopen on the
 		// same content the user last typed, and the banner should report
-		// "Unsaved changes".
+		// "Unsaved changes" with Submit still gated.
 		await page.locator('aside').getByText(pageTitle, { exact: true }).click();
 		const restoredEditor = page
 			.locator('.ProseMirror, [contenteditable="true"]')
@@ -627,24 +638,30 @@ test.describe('Local-first draft workspace', () => {
 			timeout: 5000,
 		});
 
-		// Saving the restored draft clears the IDB entry and settles the sync
-		// state, just like a normal first-save.
-		await saveEditor(page);
-		await expectSyncSettled(page, 5000);
-		await expect(
-			page.getByRole('button', { name: 'Submit for Review' }),
-		).toBeEnabled();
+		const submitButton = page.getByRole('button', {
+			name: 'Submit for Review',
+		});
+		await expect(submitButton).toBeDisabled();
+
+		// Saving the restored draft clears the IDB entry and re-enables
+		// Submit, just like a normal first-save.
+		await page.getByRole('button', { name: 'Save' }).click();
+		await expect(page.getByText('All changes saved')).toBeVisible({
+			timeout: 5000,
+		});
+		await expect(submitButton).toBeEnabled();
 	});
 
 	test('a persisted draft identical to the server self-heals instead of gating Submit', async ({
 		page,
-		wiki,
 	}) => {
 		const timestamp = Date.now();
+		const spaceName = `Phantom Draft Space ${timestamp}`;
+		const spaceRoute = `phantom-draft-space-${timestamp}`;
 		const pageTitle = `phantom-draft-page-${timestamp}`;
 		const savedContent = `Already on the server ${timestamp}`;
 
-		await createSpaceViaUI(page, wiki);
+		await createSpaceViaUI(page, { name: spaceName, route: spaceRoute });
 		await createPageViaUI(page, pageTitle);
 
 		await page.locator('aside').getByText(pageTitle, { exact: true }).click();
@@ -671,8 +688,11 @@ test.describe('Local-first draft workspace', () => {
 				contentType: 'markdown',
 			});
 		}, savedContent);
-		await saveEditor(page);
-		await expectSyncSettled(page, 5000);
+		await editor.click();
+		await page.getByRole('button', { name: 'Save' }).click();
+		await expect(page.getByText('All changes saved')).toBeVisible({
+			timeout: 5000,
+		});
 
 		// Plant a persisted IndexedDB draft whose content is byte-identical to
 		// what the server already holds — a phantom with no real unsaved
@@ -756,13 +776,14 @@ test.describe('Local-first draft workspace', () => {
 	test('a restored draft matching normalized server markdown self-heals after editor mount', async ({
 		page,
 		request,
-		wiki,
 	}) => {
 		const timestamp = Date.now();
+		const spaceName = `Normalized Draft Space ${timestamp}`;
+		const spaceRoute = `normalized-draft-space-${timestamp}`;
 		const pageTitle = `normalized-draft-page-${timestamp}`;
 		const rawServerContent = `Line A ${timestamp}\nLine B`;
 
-		await createSpaceViaUI(page, wiki);
+		await createSpaceViaUI(page, { name: spaceName, route: spaceRoute });
 		await createPageViaUI(page, pageTitle);
 		await page.locator('aside').getByText(pageTitle, { exact: true }).click();
 		await page.waitForFunction(
@@ -837,14 +858,15 @@ test.describe('Local-first draft workspace', () => {
 	test('saving again while the first save is in flight persists the latest content', async ({
 		page,
 		request,
-		wiki,
 	}) => {
 		const timestamp = Date.now();
+		const spaceName = `Queued Save Space ${timestamp}`;
+		const spaceRoute = `queued-save-space-${timestamp}`;
 		const pageTitle = `queued-save-page-${timestamp}`;
 		const firstContent = `First save ${timestamp}`;
 		const latestContent = `Latest save ${timestamp}`;
 
-		await createSpaceViaUI(page, wiki);
+		await createSpaceViaUI(page, { name: spaceName, route: spaceRoute });
 		await createPageViaUI(page, pageTitle);
 		await page.locator('aside').getByText(pageTitle, { exact: true }).click();
 		await page.waitForFunction(
@@ -869,7 +891,7 @@ test.describe('Local-first draft workspace', () => {
 				contentType: 'markdown',
 			});
 		}, firstContent);
-		await saveEditor(page);
+		await page.getByRole('button', { name: 'Save' }).click();
 		await expect(page.getByText('Saving…')).toBeVisible();
 
 		await page.evaluate((content) => {
@@ -879,7 +901,9 @@ test.describe('Local-first draft workspace', () => {
 		}, latestContent);
 		await page.keyboard.press('Control+s');
 
-		await expectSyncSettled(page, 8000);
+		await expect(page.getByText('All changes saved')).toBeVisible({
+			timeout: 8000,
+		});
 		await unroute();
 
 		const { crName, docKey } = await page.evaluate(() => {
@@ -901,15 +925,19 @@ test.describe('Local-first draft workspace', () => {
 	test('delayed reorder: visual order stays stable across slow sync', async ({
 		page,
 		request,
-		wiki,
 	}) => {
 		const timestamp = Date.now();
+		const spaceName = `Delay Reorder Space ${timestamp}`;
+		const spaceRoute = `delay-reorder-space-${timestamp}`;
 		const groupTitle = `Reorder Group ${timestamp}`;
 		const pageTitles = ['1', '2', '3', '4'].map(
 			(n) => `Reorder Page ${n} ${timestamp}`,
 		);
 
-		const { spaceId } = await createSpaceViaUI(page, wiki);
+		const { spaceId } = await createSpaceViaUI(page, {
+			name: spaceName,
+			route: spaceRoute,
+		});
 
 		// Seed a group with 4 pages directly via the existing CR APIs so the
 		// test focuses on the reorder behaviour, not creation.

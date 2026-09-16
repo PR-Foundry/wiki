@@ -132,16 +132,14 @@ export const PdfBlock = Node.create({
 		},
 
 		tokenize(src) {
-			const imagePattern =
-				/^!\[([^\]]*)\]\(((?:[^()"]|\([^()"]*\))+?)(?:\s+"([^"]*)")?\)/;
-			const match = imagePattern.exec(src);
+			const match = /^!\[([^\]]*)\]\(([^)]+)\)/.exec(src);
 
 			if (!match) {
 				return undefined;
 			}
 
 			const filename = match[1];
-			const url = (match[2] || '').trim();
+			const url = match[2];
 
 			// Only tokenize when it's a PDF URL — otherwise let the image/video
 			// tokenizers handle it.

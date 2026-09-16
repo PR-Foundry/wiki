@@ -21,7 +21,6 @@ from wiki.permissions import (
 	wiki_document_has_permission,
 	wiki_space_has_permission,
 )
-from wiki.tests.factory import make_space
 
 
 def _set_contributions(space: str, allow: bool) -> None:
@@ -58,11 +57,22 @@ def _ensure_user(email: str, roles: list[str]) -> str:
 
 
 def _make_space(test_case, name: str, roles: list[tuple[str, str]]) -> str:
-	space = make_space(
-		space_name=name,
-		route=frappe.scrub(name).replace("_", "-"),
-		roles=roles,
+	root_group = frappe.get_doc({"doctype": "Wiki Document", "title": f"Root {name}", "is_group": 1}).insert(
+		ignore_permissions=True
 	)
+	test_case._docs.append(root_group.name)
+
+	space = frappe.get_doc(
+		{
+			"doctype": "Wiki Space",
+			"space_name": name,
+			"route": frappe.scrub(name).replace("_", "-"),
+			"root_group": root_group.name,
+		}
+	)
+	for role, level in roles:
+		space.append("roles", {"role": role, "permission_level": level})
+	space.insert(ignore_permissions=True)
 	test_case._spaces.append(space.name)
 	return space.name
 

@@ -162,16 +162,14 @@ export const VideoBlock = Node.create({
 
 		tokenize(src) {
 			// Match markdown image syntax: ![alt](url)
-			const imagePattern =
-				/^!\[([^\]]*)\]\(((?:[^()"]|\([^()"]*\))+?)(?:\s+"([^"]*)")?\)/;
-			const match = imagePattern.exec(src);
+			const match = /^!\[([^\]]*)\]\(([^)]+)\)/.exec(src);
 
 			if (!match) {
 				return undefined;
 			}
 
 			const alt = match[1];
-			const url = (match[2] || '').trim();
+			const url = match[2];
 
 			// Only tokenize if it's a video URL
 			if (!isVideoUrl(url)) {

@@ -1,5 +1,6 @@
-import { expect, test } from '../fixtures';
-import { createDraftAndOpenEditor } from '../helpers/wiki';
+import { expect, test } from '@playwright/test';
+import { APP_BASE, spaceLinkSelector } from '../helpers/routes';
+import { openNewPageDialog } from '../helpers/wiki';
 
 /**
  * Regression coverage for frappe/wiki#609:
@@ -11,6 +12,46 @@ import { createDraftAndOpenEditor } from '../helpers/wiki';
  * pages) the default ProseMirror handler keeps the rich formatting untouched.
  */
 test.describe('Markdown Paste (#609)', () => {
+	/**
+	 * Navigate to a space and create a new page, returning the editor locator.
+	 * Mirrors the harness used by markdown-breaks.spec.ts.
+	 */
+	async function createPageAndOpenEditor(
+		page: import('@playwright/test').Page,
+		pageTitle: string,
+	) {
+		await page.goto(APP_BASE);
+		await page.waitForLoadState('networkidle');
+
+		const spaceLink = page.locator(spaceLinkSelector()).first();
+		await expect(spaceLink).toBeVisible({ timeout: 5000 });
+		await spaceLink.click();
+		await page.waitForLoadState('networkidle');
+
+		await openNewPageDialog(page);
+
+		await page.getByLabel('Title').fill(pageTitle);
+		await page
+			.getByRole('dialog')
+			.getByRole('button', { name: 'Save' })
+			.click();
+		await page.waitForLoadState('networkidle');
+
+		const pageTitleInput = page.getByRole('textbox', { name: 'Page title' });
+		const openedCreatedPage = await pageTitleInput
+			.inputValue({ timeout: 2000 })
+			.then((value) => value === pageTitle)
+			.catch(() => false);
+		if (!openedCreatedPage) {
+			await page.locator('aside').getByText(pageTitle, { exact: true }).click();
+		}
+		await expect(pageTitleInput).toHaveValue(pageTitle, { timeout: 10000 });
+
+		const editor = page.locator('.ProseMirror, [contenteditable="true"]');
+		await expect(editor).toBeVisible({ timeout: 10000 });
+		return editor;
+	}
+
 	/**
 	 * Fire a real `paste` ClipboardEvent at the ProseMirror DOM node so the
 	 * editor's own `handlePaste` runs — exactly the path a user's Cmd+V takes.
@@ -50,11 +91,9 @@ test.describe('Markdown Paste (#609)', () => {
 
 	test('pasting plain-text markdown renders it (headings, bold, list)', async ({
 		page,
-		wiki,
 	}) => {
-		const editor = await createDraftAndOpenEditor(
+		const editor = await createPageAndOpenEditor(
 			page,
-			await wiki.space(),
 			`md-paste-${Date.now()}`,
 		);
 		await editor.click();
@@ -78,11 +117,9 @@ test.describe('Markdown Paste (#609)', () => {
 
 	test('pasting rich HTML keeps its formatting (does not re-parse as markdown)', async ({
 		page,
-		wiki,
 	}) => {
-		const editor = await createDraftAndOpenEditor(
+		const editor = await createPageAndOpenEditor(
 			page,
-			await wiki.space(),
 			`md-paste-html-${Date.now()}`,
 		);
 		await editor.click();

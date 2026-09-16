@@ -8,6 +8,7 @@ import { pinia } from './stores';
 import translationPlugin from './translation';
 
 import {
+	Alert,
 	Badge,
 	Button,
 	Dialog,
@@ -15,6 +16,7 @@ import {
 	FormControl,
 	TextInput,
 	frappeRequest,
+	pageMetaPlugin,
 	resourcesPlugin,
 	setConfig,
 } from 'frappe-ui';
@@ -28,6 +30,7 @@ const globalComponents = {
 	FormControl,
 	ErrorMessage,
 	Dialog,
+	Alert,
 	Badge,
 };
 
@@ -39,6 +42,7 @@ app.use(pinia);
 app.use(router);
 app.use(translationPlugin);
 app.use(resourcesPlugin);
+app.use(pageMetaPlugin);
 
 const socket = initSocket();
 app.config.globalProperties.$socket = socket;

@@ -1,12 +1,13 @@
-import { expect, test } from '../fixtures';
-import type { SeededSpace } from '../helpers/factory';
+import { expect, test } from '@playwright/test';
 import { getList } from '../helpers/frappe';
-import { CHANGE_REQUEST_URL_RE } from '../helpers/routes';
 import {
-	currentDraftDocKey,
+	APP_BASE,
+	CHANGE_REQUEST_URL_RE,
+	spaceLinkSelector,
+} from '../helpers/routes';
+import {
 	openNewPageDialog,
 	publishChangeRequestFromReview,
-	saveEditor,
 } from '../helpers/wiki';
 
 interface WikiDocumentRoute {
@@ -33,12 +34,16 @@ declare global {
 async function createAndPublishPage(
 	page: import('@playwright/test').Page,
 	request: import('@playwright/test').APIRequestContext,
-	space: SeededSpace,
 	title: string,
 	markdownContent: string,
 ): Promise<string> {
 	await page.setViewportSize({ width: 1100, height: 900 });
-	await page.goto(space.url());
+	await page.goto(APP_BASE);
+	await page.waitForLoadState('networkidle');
+
+	const spaceLink = page.locator(spaceLinkSelector()).first();
+	await expect(spaceLink).toBeVisible({ timeout: 5000 });
+	await spaceLink.click();
 	await page.waitForLoadState('networkidle');
 
 	await openNewPageDialog(page);
@@ -63,7 +68,9 @@ async function createAndPublishPage(
 		const match = window.location.pathname.match(/\/draft\/([^/?#]+)/);
 		return match && !decodeURIComponent(match[1]).startsWith('tmp_');
 	});
-	const docKey = await currentDraftDocKey(page);
+	const draftMatch = page.url().match(/\/draft\/([^/?#]+)/);
+	expect(draftMatch).toBeTruthy();
+	const docKey = decodeURIComponent(draftMatch?.[1] ?? '');
 
 	const editor = page.locator('.ProseMirror, [contenteditable="true"]');
 	await expect(editor).toBeVisible({ timeout: 10000 });
@@ -80,7 +87,7 @@ async function createAndPublishPage(
 	await editor.click();
 	await page.waitForTimeout(500);
 
-	await saveEditor(page);
+	await page.getByRole('button', { name: 'Save', exact: true }).click();
 	await page.waitForLoadState('networkidle');
 
 	const submitButton = page.getByRole('button', { name: 'Submit for Review' });
@@ -105,7 +112,6 @@ test.describe('Image Viewer / Lightbox', () => {
 	test('should open lightbox when clicking a prose image and close on overlay click', async ({
 		page,
 		request,
-		wiki,
 	}) => {
 		const pageTitle = `lightbox-test-${Date.now()}`;
 		const markdown = `## Image Test
@@ -119,7 +125,6 @@ Some text after the image.`;
 		const publicUrl = await createAndPublishPage(
 			page,
 			request,
-			await wiki.space(),
 			pageTitle,
 			markdown,
 		);
@@ -169,11 +174,7 @@ Some text after the image.`;
 		await publicPage.close();
 	});
 
-	test('should close lightbox on Escape key', async ({
-		page,
-		request,
-		wiki,
-	}) => {
+	test('should close lightbox on Escape key', async ({ page, request }) => {
 		const pageTitle = `lightbox-esc-test-${Date.now()}`;
 		const markdown = `## Escape Key Test
 
@@ -182,7 +183,6 @@ Some text after the image.`;
 		const publicUrl = await createAndPublishPage(
 			page,
 			request,
-			await wiki.space(),
 			pageTitle,
 			markdown,
 		);
@@ -211,7 +211,6 @@ Some text after the image.`;
 	test('should wire up images loaded via SPA navigation', async ({
 		page,
 		request,
-		wiki,
 	}) => {
 		// Create two pages — one with an image, one without
 		const pageTitle1 = `lightbox-spa-1-${Date.now()}`;
@@ -225,20 +224,15 @@ Just some text, no images here.`;
 
 ![SPA test image](https://placehold.co/600x400/png)`;
 
-		// A space each: both are reached by URL, never through prev/next, and
-		// publishing twice into one space leaves the second editor holding a
-		// change request the first merge has already moved past.
 		const publicUrl1 = await createAndPublishPage(
 			page,
 			request,
-			await wiki.space(),
 			pageTitle1,
 			markdown1,
 		);
 		const publicUrl2 = await createAndPublishPage(
 			page,
 			request,
-			await wiki.space(),
 			pageTitle2,
 			markdown2,
 		);

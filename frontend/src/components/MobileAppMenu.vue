@@ -1,5 +1,5 @@
 <template>
-	<Dropdown :options="menuOptions" align="end">
+	<Dropdown :options="menuOptions" placement="right">
 		<Button variant="ghost" :label="__('Menu')">
 			<template #icon>
 				<span class="lucide-menu size-4" aria-hidden="true" />

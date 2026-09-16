@@ -8,10 +8,11 @@
 				<p class="text-ink-gray-7">
 					{{ __('Assign this change request to a reviewer. They will be notified and it will appear in their "Assigned to me" list.') }}
 				</p>
-				<MultiSelect
+				<Autocomplete
 					v-model="selected"
 					:options="userOptions"
 					:placeholder="__('Search people...')"
+					multiple
 				/>
 			</div>
 		</template>
@@ -33,9 +34,9 @@
 
 <script setup>
 import {
+	Autocomplete,
 	Button,
 	Dialog,
-	MultiSelect,
 	createListResource,
 	createResource,
 	toast,
@@ -76,7 +77,7 @@ const assignResource = createResource({
 });
 
 async function handleAssign(close) {
-	const assignTo = selected.value;
+	const assignTo = selected.value.map((o) => o.value || o);
 	if (!assignTo.length) return;
 	try {
 		await assignResource.submit({

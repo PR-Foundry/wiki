@@ -6,14 +6,12 @@
 			v-if="!compactHeader"
 			class="flex h-12 shrink-0 items-center gap-1 border-b border-outline-gray-2 px-2"
 		>
-			<Tooltip :text="__('Back to All Spaces')">
-				<Button
-					variant="ghost"
-					icon="lucide-arrow-left"
-					:aria-label="__('Back to All Spaces')"
-					:route="{ name: 'Overview' }"
-				/>
-			</Tooltip>
+			<Button
+				variant="ghost"
+				icon="arrow-left"
+				:title="__('Back to Spaces')"
+				:route="{ name: 'SpaceList' }"
+			/>
 			<div class="min-w-0 flex-1">
 				<div class="truncate text-base-medium leading-none text-ink-gray-8">
 					{{ spaceName || spaceId }}
@@ -22,30 +20,23 @@
 					{{ spaceRoute }}
 				</div>
 			</div>
-			<Tooltip :text="__('View space')">
-				<Button
-					v-if="spaceRoute"
-					variant="ghost"
-					icon="lucide-external-link"
-					:aria-label="__('View space')"
-					:link="'/' + spaceRoute"
-				/>
-			</Tooltip>
-			<Tooltip :text="__('Space settings')">
-				<Button
-					variant="ghost"
-					icon="lucide-settings"
-					:aria-label="__('Space settings')"
-					@click="emit('open-settings')"
-				/>
-			</Tooltip>
+			<Button
+				v-if="spaceRoute"
+				variant="ghost"
+				icon="external-link"
+				:title="__('View Space')"
+				:link="'/' + spaceRoute"
+			/>
+			<Button
+				variant="ghost"
+				icon="settings"
+				:title="__('Settings')"
+				@click="emit('open-settings')"
+			/>
 		</div>
 
-		<!-- The list owns the scroller: its search row and New page footer have
-		     to stay put while the tree between them scrolls. -->
-		<div v-if="spaceLoaded && treeData" class="flex min-h-0 flex-1 flex-col pt-2">
+		<div v-if="spaceLoaded && treeData" class="flex-1 overflow-auto px-2 pt-2 pb-10">
 			<WikiDocumentList
-				class="min-h-0 flex-1"
 				:tree-data="treeData"
 				:change-type-map="changeTypeMap"
 				:space-id="spaceId"
@@ -53,14 +44,12 @@
 				:root-node="treeData.root_group || ''"
 				:selected-page-id="selectedPageId"
 				:selected-draft-key="selectedDraftKey"
+				:can-manage-tabs="canManageTabs"
+				:space-root-node="spaceRootNode"
 				:space-route="spaceRoute"
 				@refresh="emit('refresh')"
 				@reorder-state-change="emit('reorder-state-change', $event)"
-			>
-				<template v-if="$slots['above-footer']" #above-footer>
-					<slot name="above-footer" />
-				</template>
-			</WikiDocumentList>
+			/>
 		</div>
 		<div v-else class="flex-1 overflow-auto p-2">
 			<!-- Sidebar tree skeleton -->
@@ -68,22 +57,22 @@
 				<div
 					v-for="i in 8"
 					:key="i"
-					class="flex items-center gap-2 px-2 py-1.5 rounded-4"
+					class="flex items-center gap-2 px-2 py-1.5 rounded"
 				>
-					<Skeleton class="size-4 rounded-4 shrink-0" />
+					<Skeleton class="size-4 rounded shrink-0" />
 					<Skeleton
-						class="h-3.5 rounded-4"
+						class="h-3.5 rounded"
 						:style="{ width: `${60 + (i % 3) * 25}%` }"
 					/>
 				</div>
 				<div
 					v-for="i in 4"
 					:key="'nested-' + i"
-					class="flex items-center gap-2 px-2 py-1.5 rounded-4 ml-6"
+					class="flex items-center gap-2 px-2 py-1.5 rounded ml-6"
 				>
-					<Skeleton class="size-4 rounded-4 shrink-0" />
+					<Skeleton class="size-4 rounded shrink-0" />
 					<Skeleton
-						class="h-3.5 rounded-4"
+						class="h-3.5 rounded"
 						:style="{ width: `${50 + (i % 2) * 30}%` }"
 					/>
 				</div>
@@ -93,7 +82,7 @@
 </template>
 
 <script setup>
-import { Button, Skeleton, Tooltip } from 'frappe-ui';
+import { Button, Skeleton } from 'frappe-ui';
 
 import WikiDocumentList from './WikiDocumentList.vue';
 
@@ -102,11 +91,17 @@ defineProps({
 	spaceName: { type: String, default: '' },
 	spaceRoute: { type: String, default: '' },
 	spaceLoaded: { type: Boolean, default: false },
+	// Already narrowed to the active tab's subtree by useSpaceTabs; `root_group`
+	// is that tab, so top-level drops reparent into it.
 	treeData: { type: Object, default: null },
 	changeTypeMap: { type: Map, default: () => new Map() },
 	readonly: { type: Boolean, default: false },
 	selectedPageId: { type: String, default: null },
 	selectedDraftKey: { type: String, default: null },
+	canManageTabs: { type: Boolean, default: false },
+	// The space root, where a new tab must be parented regardless of which tab
+	// is currently being browsed.
+	spaceRootNode: { type: String, default: '' },
 	compactHeader: { type: Boolean, default: false },
 });
 

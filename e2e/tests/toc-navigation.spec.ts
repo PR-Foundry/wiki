@@ -1,12 +1,14 @@
-import { expect, test } from '../fixtures';
+import { expect, test } from '@playwright/test';
 import { getList } from '../helpers/frappe';
-import { CHANGE_REQUEST_URL_RE } from '../helpers/routes';
+import {
+	APP_BASE,
+	CHANGE_REQUEST_URL_RE,
+	spaceLinkSelector,
+} from '../helpers/routes';
 import {
 	clickSidebarAddOption,
-	currentDraftDocKey,
 	openNewPageDialog,
 	publishChangeRequestFromReview,
-	saveEditor,
 } from '../helpers/wiki';
 
 interface WikiDocumentRoute {
@@ -35,12 +37,16 @@ test.describe('TOC Navigation', () => {
 	test('should update TOC headings when navigating between pages via sidebar', async ({
 		page,
 		request,
-		wiki,
 	}) => {
 		await page.setViewportSize({ width: 1100, height: 900 });
 
-		const space = await wiki.space();
-		await page.goto(space.url());
+		// Navigate to wiki and click first space
+		await page.goto(APP_BASE);
+		await page.waitForLoadState('networkidle');
+
+		const spaceLink = page.locator(spaceLinkSelector()).first();
+		await expect(spaceLink).toBeVisible({ timeout: 5000 });
+		await spaceLink.click();
 		await page.waitForLoadState('networkidle');
 
 		// Create first page with specific headings
@@ -61,7 +67,9 @@ test.describe('TOC Navigation', () => {
 			.getByText(firstPageTitle, { exact: true })
 			.click();
 		await page.waitForURL(/\/draft\/[^/?#]+/);
-		const firstDocKey = await currentDraftDocKey(page);
+		const draftMatch1 = page.url().match(/\/draft\/([^/?#]+)/);
+		expect(draftMatch1).toBeTruthy();
+		const firstDocKey = decodeURIComponent(draftMatch1?.[1] ?? '');
 
 		const editor = page.locator('.ProseMirror, [contenteditable="true"]');
 		await expect(editor).toBeVisible({ timeout: 10000 });
@@ -93,7 +101,7 @@ Beta sub content.`;
 		await editor.click();
 		await page.waitForTimeout(500);
 
-		await saveEditor(page);
+		await page.click('button:has-text("Save")');
 		await page.waitForLoadState('networkidle');
 		await page.waitForTimeout(2000);
 
@@ -148,7 +156,7 @@ Epsilon content here.`;
 		await editor.click();
 		await page.waitForTimeout(500);
 
-		await saveEditor(page);
+		await page.click('button:has-text("Save")');
 		await page.waitForLoadState('networkidle');
 		await page.waitForTimeout(2000);
 

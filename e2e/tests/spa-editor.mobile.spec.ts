@@ -1,7 +1,10 @@
-import { expect, test } from '../fixtures';
-import { uniqueRoute } from '../helpers/factory';
+import { expect, test } from '@playwright/test';
 import { SPACE_URL_RE, appUrl } from '../helpers/routes';
-import { openNewPageDialog } from '../helpers/wiki';
+import {
+	cleanupWikiSpacesByRoute,
+	clickSidebarAddOption,
+	createTestWikiSpace,
+} from '../helpers/wiki';
 
 /**
  * Mobile-friendly SPA (Phases 1-2) tracer + regression guards, on a phone
@@ -22,15 +25,25 @@ async function pageOverflow(page: import('@playwright/test').Page) {
 }
 
 test.describe('Mobile SPA', () => {
+	const createdRoutes: string[] = [];
+
+	test.afterEach(async ({ request }) => {
+		while (createdRoutes.length) {
+			const route = createdRoutes.pop() as string;
+			await cleanupWikiSpacesByRoute(request, route).catch(() => {});
+		}
+	});
+
 	// Phase 1: the bug we guard against is the editor collapsing to a sliver
 	// because the desktop sidebars ate the screen. The tree must live in a
 	// drawer and the editor must fill the width.
 	test('tree opens in a drawer and the editor fills the screen at 375px', async ({
 		page,
-		wiki,
 	}) => {
-		const spaceRoute = uniqueRoute('mobile-spa');
-		const pageTitle = `Mobile Page ${Date.now()}`;
+		const stamp = Date.now();
+		const spaceRoute = `mobile-spa-${stamp}`;
+		createdRoutes.push(spaceRoute);
+		const pageTitle = `Mobile Page ${stamp}`;
 
 		// --- Setup at desktop: create a space with one page ---
 		await page.setViewportSize(DESKTOP);
@@ -48,9 +61,15 @@ test.describe('Mobile SPA', () => {
 		await expect(page).toHaveURL(SPACE_URL_RE);
 		await page.waitForLoadState('networkidle');
 		const spaceUrl = page.url();
-		wiki.adopt(spaceUrl.split('/spaces/')[1].split(/[/?#]/)[0]);
 
-		await openNewPageDialog(page);
+		const createFirstPage = page.locator(
+			'button:has-text("Create First Page")',
+		);
+		if (await createFirstPage.isVisible({ timeout: 2000 }).catch(() => false)) {
+			await createFirstPage.click();
+		} else {
+			await clickSidebarAddOption(page, 'New Page');
+		}
 		await page.getByLabel('Title').fill(pageTitle);
 		await page
 			.getByRole('dialog')
@@ -107,16 +126,18 @@ test.describe('Mobile SPA', () => {
 	// and rows still navigate.
 	test('Spaces and Change Requests render without page overflow; rows navigate', async ({
 		page,
-		wiki,
+		request,
 	}) => {
-		const { route: spaceRoute } = await wiki.space();
+		const spaceRoute = `mobile-list-${Date.now()}`;
+		createdRoutes.push(spaceRoute);
+		await createTestWikiSpace(request, { route: spaceRoute });
 
 		await page.setViewportSize(PHONE);
 		await page.goto(appUrl('spaces'));
 		await page.waitForLoadState('networkidle');
 
 		await expect(
-			page.getByRole('heading', { name: 'All Spaces', exact: true }),
+			page.getByRole('heading', { name: 'Wiki Spaces' }),
 		).toBeVisible();
 		// The header stacks and the table scrolls inside its container, so the
 		// page itself must not gain a horizontal scrollbar.
@@ -141,23 +162,24 @@ test.describe('Mobile SPA', () => {
 	// backdrop swallows the dialog's outside-click.
 	test('Settings opens on top of the tree drawer, not behind it', async ({
 		page,
-		wiki,
+		request,
 	}) => {
-		const space = await wiki.space();
+		const spaceRoute = `mobile-settings-${Date.now()}`;
+		createdRoutes.push(spaceRoute);
+		const space = await createTestWikiSpace(request, { route: spaceRoute });
 
 		await page.setViewportSize(PHONE);
-		await page.goto(space.url());
+		await page.goto(appUrl('spaces', space.name));
 		await page.waitForLoadState('networkidle');
 
 		// Open the tree drawer, then Settings from inside it.
 		await page.getByRole('button', { name: 'Pages' }).click();
 		const drawer = page.locator('.drawer-content');
 		await expect(drawer).toBeVisible();
-		// The trigger carries an aria-label now, not a title attribute.
-		await drawer.getByRole('button', { name: 'Space settings' }).click();
+		await drawer.getByTitle('Settings').click();
 
 		// Drawer closes; the settings dialog is the only modal left.
 		await expect(drawer).toBeHidden();
-		await expect(page.getByText('Access', { exact: true })).toBeVisible();
+		await expect(page.getByText('Permissions', { exact: true })).toBeVisible();
 	});
 });

@@ -1,5 +1,4 @@
-import { expect, test } from '../fixtures';
-import { uniqueRoute } from '../helpers/factory';
+import { expect, test } from '@playwright/test';
 import { getList } from '../helpers/frappe';
 import {
 	APP_BASE,
@@ -9,11 +8,10 @@ import {
 	spaceLinkSelector,
 } from '../helpers/routes';
 import {
-	currentDraftDocKey,
-	newPageButton,
+	cleanupWikiSpacesByRoute,
+	createTestWikiSpace,
 	openNewPageDialog,
 	publishChangeRequestFromReview,
-	saveEditor,
 } from '../helpers/wiki';
 
 interface WikiDocumentRoute {
@@ -26,6 +24,15 @@ interface WikiDocumentRoute {
  * For public-facing page tests (TOC, sidebar), see public-pages.spec.ts
  */
 test.describe('Wiki Editor', () => {
+	// Spaces created via API for tests that need a clean, isolated space rather
+	// than reusing whatever "first available space" happens to exist.
+	const createdRoutes: string[] = [];
+	test.afterAll(async ({ request }) => {
+		for (const route of createdRoutes) {
+			await cleanupWikiSpacesByRoute(request, route);
+		}
+	});
+
 	test('should display wiki spaces list', async ({ page }) => {
 		await page.goto(APP_BASE);
 		await page.waitForLoadState('networkidle');
@@ -40,7 +47,7 @@ test.describe('Wiki Editor', () => {
 		await expect(spacesContainer.first()).toBeVisible();
 	});
 
-	test('should create a new wiki space via UI', async ({ page, wiki }) => {
+	test('should create a new wiki space via UI', async ({ page }) => {
 		await page.goto(APP_BASE);
 		await page.waitForLoadState('networkidle');
 
@@ -51,7 +58,7 @@ test.describe('Wiki Editor', () => {
 		const dialog = page.locator('[role="dialog"]').first();
 		await dialog.waitFor({ state: 'visible' });
 
-		const spaceName = uniqueRoute('test-space');
+		const spaceName = `Test Space ${Date.now()}`;
 		await dialog.locator('input[type="text"]').first().fill(spaceName);
 
 		// Wait for route to auto-populate from space name
@@ -67,7 +74,6 @@ test.describe('Wiki Editor', () => {
 		// In change-request mode the name lives in the top banner rather than the
 		// tree aside; the timestamped name is unique, so match it page-wide.
 		await expect(page).toHaveURL(SPACE_URL_RE, { timeout: 10000 });
-		wiki.adopt(page.url().split('/spaces/')[1].split(/[/?#]/)[0]);
 		await expect(
 			page.getByText(spaceName, { exact: true }).first(),
 		).toBeVisible();
@@ -76,11 +82,15 @@ test.describe('Wiki Editor', () => {
 	test('should navigate to space and create a wiki page', async ({
 		page,
 		request,
-		wiki,
 	}) => {
-		const space = await wiki.space();
+		// Create a dedicated, empty space rather than reusing whatever space
+		// happens to be first — that shared space can carry an in-progress draft
+		// from another test, which made this flaky.
+		const spaceRoute = `create-page-${Date.now()}`;
+		createdRoutes.push(spaceRoute);
+		const space = await createTestWikiSpace(request, { route: spaceRoute });
 
-		await page.goto(space.url());
+		await page.goto(appUrl('spaces', space.name));
 		await page.waitForLoadState('networkidle');
 		await expect(page.locator('aside')).toBeVisible();
 
@@ -116,32 +126,52 @@ test.describe('Wiki Editor', () => {
 		await expect(page.getByText(pageTitle).first()).toBeVisible();
 	});
 
-	test('should have New Page button in space sidebar', async ({
-		page,
-		wiki,
-	}) => {
-		const space = await wiki.space();
-		await page.goto(space.url());
+	test('should have New Page button in space sidebar', async ({ page }) => {
+		// Navigate to wiki and click first space
+		await page.goto(APP_BASE);
+		await page.waitForLoadState('networkidle');
+
+		const spaceLink = page.locator(spaceLinkSelector()).first();
+		await expect(spaceLink).toBeVisible({ timeout: 5000 });
+		await spaceLink.click();
 		await page.waitForLoadState('networkidle');
 
 		// Should have sidebar with space management buttons
 		await expect(page.locator('aside')).toBeVisible();
 
-		// Wait for the tree to load (CR mode requires async init). The sidebar
-		// footer's New page button is there whether or not the space has pages.
-		await expect(newPageButton(page)).toBeVisible({ timeout: 10000 });
+		// Wait for the tree to load (CR mode requires async init).
+		// On an empty space the empty-state "Create First Page" CTA renders
+		// instead of the sidebar Add dropdown — `.or().first()` tolerates
+		// either without tripping strict-mode on two matches.
+		const createFirstPage = page.locator(
+			'button:has-text("Create First Page")',
+		);
+		const addButton = page.locator('button[title="Add"]');
+		await expect(createFirstPage.or(addButton).first()).toBeVisible({
+			timeout: 10000,
+		});
 	});
 
 	test('should open wiki editor when clicking page in sidebar', async ({
 		page,
-		wiki,
 	}) => {
-		const space = await wiki.space();
-		await page.goto(space.url());
+		// Navigate to wiki and click first space
+		await page.goto(APP_BASE);
 		await page.waitForLoadState('networkidle');
 
-		// Wait for the sidebar to load.
-		await expect(newPageButton(page)).toBeVisible({ timeout: 10000 });
+		const spaceLink = page.locator(spaceLinkSelector()).first();
+		await expect(spaceLink).toBeVisible({ timeout: 5000 });
+		await spaceLink.click();
+		await page.waitForLoadState('networkidle');
+
+		// Wait for sidebar to load - either the empty-state CTA or the Add menu
+		const createFirstPage = page.locator(
+			'button:has-text("Create First Page")',
+		);
+		const addButton = page.locator('button[title="Add"]');
+		await expect(createFirstPage.or(addButton).first()).toBeVisible({
+			timeout: 10000,
+		});
 
 		// Always create a new page so we know exactly what to click
 		const pageTitle = `Test Page ${Date.now()}`;
@@ -163,25 +193,28 @@ test.describe('Wiki Editor', () => {
 			page.locator('.ProseMirror, [contenteditable="true"]'),
 		).toBeVisible({ timeout: 10000 });
 
-		// The editor autosaves, so its own header action is what marks edit mode.
-		await expect(
-			page.getByRole('button', { name: 'Submit for Review' }),
-		).toBeVisible();
+		// Verify save draft button is present (indicates edit mode)
+		await expect(page.locator('button:has-text("Save")')).toBeVisible();
 	});
 
 	test('should publish page and view it on public route', async ({
 		page,
 		request,
-		wiki,
 	}) => {
-		const space = await wiki.space();
-		await page.goto(space.url());
+		// Navigate to wiki and click first space
+		await page.goto(APP_BASE);
+		await page.waitForLoadState('networkidle');
+
+		const spaceLink = page.locator(spaceLinkSelector()).first();
+		await expect(spaceLink).toBeVisible({ timeout: 5000 });
+		await spaceLink.click();
 		await page.waitForLoadState('networkidle');
 
 		// Create a new page with specific title and content
 		const pageTitle = `e2e-cr-page-${Date.now()}`;
 		const pageContent = `This is test content created by E2E tests at ${new Date().toISOString()}`;
 
+		// Click create button (either "Create First Page" or "New Page")
 		await openNewPageDialog(page);
 
 		// Fill in page title
@@ -195,7 +228,9 @@ test.describe('Wiki Editor', () => {
 		// Open the newly created page from the tree
 		await page.locator('aside').getByText(pageTitle, { exact: true }).click();
 		await page.waitForURL(/\/draft\/[^/?#]+/);
-		const docKey = await currentDraftDocKey(page);
+		const draftMatch = page.url().match(/\/draft\/([^/?#]+)/);
+		expect(draftMatch).toBeTruthy();
+		const docKey = decodeURIComponent(draftMatch?.[1] ?? '');
 
 		// Wait for editor to be visible
 		const editor = page.locator('.ProseMirror, [contenteditable="true"]');
@@ -207,7 +242,7 @@ test.describe('Wiki Editor', () => {
 		await page.keyboard.type(pageContent);
 
 		// Save the draft
-		await saveEditor(page);
+		await page.click('button:has-text("Save")');
 		await page.waitForLoadState('networkidle');
 
 		// Submit for review and merge

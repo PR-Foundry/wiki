@@ -5,7 +5,6 @@ import frappe
 from frappe.tests.utils import FrappeTestCase
 from frappe.utils.nestedset import get_descendants_of
 
-from wiki.tests.factory import WikiFixtureMixin
 from wiki.wiki.doctype.wiki_space.patches.v3 import (
 	migrate_orphan_pages_to_wiki_document,
 	migrate_to_new_tree_document_structure,
@@ -13,20 +12,18 @@ from wiki.wiki.doctype.wiki_space.patches.v3 import (
 from wiki.wiki.doctype.wiki_space.wiki_space import clone_wiki_space
 
 
-class TestWikiSpaceClone(WikiFixtureMixin, FrappeTestCase):
+class TestWikiSpaceClone(FrappeTestCase):
 	TEST_SITE = "wiki.localhost"
 
 	def setUp(self):
 		frappe.set_user("Administrator")
-		self.space = self.wiki.track_space(
-			frappe.get_doc(
-				{
-					"doctype": "Wiki Space",
-					"space_name": f"Clone Source {frappe.generate_hash(length=6)}",
-					"route": f"source-space-{frappe.generate_hash(length=6)}",
-				}
-			).insert()
-		)
+		self.space = frappe.get_doc(
+			{
+				"doctype": "Wiki Space",
+				"space_name": f"Clone Source {frappe.generate_hash(length=6)}",
+				"route": f"source-space-{frappe.generate_hash(length=6)}",
+			}
+		).insert()
 		self.group_doc = frappe.get_doc(
 			{
 				"doctype": "Wiki Document",
@@ -34,7 +31,7 @@ class TestWikiSpaceClone(WikiFixtureMixin, FrappeTestCase):
 				"is_group": 1,
 				"parent_wiki_document": self.space.root_group,
 			}
-		).insert()  # inside the space, so its cascade takes this
+		).insert()
 
 		self.page_doc = frappe.get_doc(
 			{
@@ -48,7 +45,6 @@ class TestWikiSpaceClone(WikiFixtureMixin, FrappeTestCase):
 	def test_clone_wiki_space_copies_tree_and_routes(self):
 		new_route = f"clone-space-{frappe.generate_hash(length=6)}"
 		new_space_name = clone_wiki_space(self.space.name, new_route)
-		self.wiki.track_space(new_space_name)
 		new_space = frappe.get_doc("Wiki Space", new_space_name)
 
 		self.assertEqual(new_space.route, new_route)
@@ -102,7 +98,7 @@ class TestWikiSpaceClone(WikiFixtureMixin, FrappeTestCase):
 		frappe.db.rollback()
 
 
-class TestWikiSpaceMigration(WikiFixtureMixin, FrappeTestCase):
+class TestWikiSpaceMigration(FrappeTestCase):
 	def setUp(self):
 		frappe.set_user("Administrator")
 
@@ -118,7 +114,6 @@ class TestWikiSpaceMigration(WikiFixtureMixin, FrappeTestCase):
 			}
 		)
 		page.db_insert()
-		self.wiki.track("Wiki Page", page)
 		return page
 
 	def create_legacy_space(self, route: str, sidebar_rows: list[dict]):
@@ -131,7 +126,7 @@ class TestWikiSpaceMigration(WikiFixtureMixin, FrappeTestCase):
 		)
 		for row in sidebar_rows:
 			space.append("wiki_sidebars", row)
-		return self.wiki.track_space(space.insert())
+		return space.insert()
 
 	def test_migrate_to_v3_is_idempotent_and_resumable(self):
 		page_one = self.create_legacy_wiki_page(
@@ -267,9 +262,7 @@ class TestWikiSpaceMigration(WikiFixtureMixin, FrappeTestCase):
 		self.assertTrue(space.root_group)
 		self.assertEqual(get_descendants_of("Wiki Document", space.root_group, ignore_permissions=True), [])
 
-		before = self.wiki.snapshot_documents()
 		migrate_to_new_tree_document_structure.execute()
-		self.wiki.track_new(before)
 
 		self.assertEqual(
 			frappe.db.count("Wiki Document", {"route": page.route, "is_group": 0}),
@@ -287,22 +280,18 @@ class TestWikiSpaceMigration(WikiFixtureMixin, FrappeTestCase):
 			content="Canonical content",
 			allow_guest=0,
 		)
-		existing_doc = self.wiki.track_document(
-			frappe.get_doc(
-				{
-					"doctype": "Wiki Document",
-					"title": "Old Title",
-					"route": page.route,
-					"is_group": 0,
-					"is_published": 0,
-					"content": "old content",
-				}
-			).insert()
-		)
+		existing_doc = frappe.get_doc(
+			{
+				"doctype": "Wiki Document",
+				"title": "Old Title",
+				"route": page.route,
+				"is_group": 0,
+				"is_published": 0,
+				"content": "old content",
+			}
+		).insert()
 
-		before = self.wiki.snapshot_documents()
 		migrate_orphan_pages_to_wiki_document.execute()
-		self.wiki.track_new(before)
 
 		existing_doc.reload()
 		self.assertEqual(existing_doc.title, page.title)
